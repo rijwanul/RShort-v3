@@ -6,6 +6,7 @@
 
 No servers to manage. No monthly bill. Deploy your own instance in minutes.
 
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=rijwanul.RShort-v3)
 [![Deploy](https://img.shields.io/badge/deploy-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](#-getting-started)
 [![Database](https://img.shields.io/badge/database-D1%20(SQLite)-blue)](#-tech-stack)
 [![No build step](https://img.shields.io/badge/build%20step-none-brightgreen)](#-tech-stack)
