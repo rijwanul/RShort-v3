@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RShort v3</title>
+<link rel="icon" id="favicon" href="/img/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .home-card { max-width: 440px; width: calc(100% - 40px); text-align: center; }
+  .home-logo { max-width: 64px; max-height: 64px; margin-bottom: 18px; border-radius: 12px; }
+  .home-title { font-size: 22px; margin-bottom: 10px; }
+  .home-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="card home-card" id="app">
+    <p>Loading...</p>
+  </div>
+
+  <script type="module">
+    import { get } from "/js/api.js";
+    import { escapeHtml } from "/js/api.js";
+
+    async function init() {
+      const app = document.getElementById("app");
+      let settings;
+      try {
+        settings = await get("/api/site-info");
+      } catch {
+        app.innerHTML = "<p>Unable to load this site right now.</p>";
+        return;
+      }
+
+      document.title = settings.site_title || "RShort v3";
+      const favicon = document.getElementById("favicon");
+      if (settings.favicon_url) favicon.href = settings.favicon_url;
+
+      const logo = settings.logo_url
+        ? `<img class="home-logo" src="${escapeHtml(settings.logo_url)}" alt="" onerror="this.style.display='none'">`
+        : "";
+
+      const notice = settings.homepage_notice
+        ? `<p>${escapeHtml(settings.homepage_notice)}</p>`
+        : "";
+
+      const homeButton = settings.homepage_button_label && settings.homepage_button_url
+        ? `<a class="btn btn-secondary" href="${escapeHtml(settings.homepage_button_url)}" ${settings.homepage_button_new_tab ? 'target="_blank" rel="noopener"' : ""}>
+            ${escapeHtml(settings.homepage_button_label)}
+           </a>`
+        : "";
+
+      const loginButton = settings.homepage_show_login
+        ? `<a class="btn btn-primary" href="/login">Sign in</a>`
+        : "";
+
+      app.innerHTML = `
+        ${logo}
+        <h1 class="home-title">${escapeHtml(settings.site_title || "RShort v3")}</h1>
+        ${notice}
+        <div class="home-actions">${loginButton}${homeButton}</div>
+      `;
+    }
+
+    init();
+  </script>
+</body>
+</html>

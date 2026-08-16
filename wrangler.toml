@@ -1,0 +1,45 @@
+name = "rs3"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Static frontend (plain HTML/CSS/JS, no build step). Any request that
+# does not match a route in src/index.js falls through to these files.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# D1 database. Create it first with:
+#   wrangler d1 create rshort3_db
+# then paste the returned database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "rshort3_db"
+database_id = "334eae9d-661f-493c-84e8-ef4c7a29f9ea"
+
+# Durable Object used for reliable, race-free hit counting per slug.
+[[durable_objects.bindings]]
+name = "HIT_COUNTER"
+class_name = "HitCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HitCounter"]
+
+# ---------------------------------------------------------------------
+# Secrets (never put these in this file). Set with:
+#   wrangler secret put JWT_SECRET
+#   wrangler secret put ROOT_USERNAME
+#   wrangler secret put ROOT_PASSWORD
+#
+# JWT_SECRET      - long random string used to sign/verify auth tokens
+# ROOT_USERNAME   - root admin username or email, checked on first boot
+# ROOT_PASSWORD   - root admin initial password, checked on first boot
+#                    (the root admin is forced to change it on first login)
+# ---------------------------------------------------------------------
+
+[vars]
+# Non-secret defaults can go here if you ever need environment-specific
+# overrides. Left empty intentionally - everything else is configured
+# from the admin dashboard and stored in D1.

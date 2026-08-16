@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard - RShort v3</title>
+<link rel="icon" id="favicon" href="/img/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  body { min-height: 100vh; }
+  .app-shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 232px; flex-shrink: 0; background: #fff; border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 18px 12px;
+  }
+  .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; }
+  .sidebar-brand img { width: 28px; height: 28px; border-radius: 7px; }
+  .sidebar-brand span { font-weight: 600; font-size: 15px; }
+  .nav-group { margin-bottom: 4px; }
+  .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #9aa39a; padding: 14px 10px 6px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
+    color: var(--ink-soft); font-size: 13.5px; font-weight: 500; cursor: pointer; position: relative;
+  }
+  .nav-item:hover { background: #f2f4f1; color: var(--ink); }
+  .nav-item.active { background: var(--accent); color: #fff; }
+  .nav-item .badge-dot {
+    margin-left: auto; background: var(--danger); color: #fff; font-size: 11px; font-weight: 600;
+    border-radius: 999px; padding: 1px 6px; min-width: 18px; text-align: center;
+  }
+  .main-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+    padding: 14px 24px; border-bottom: 1px solid var(--line); background: #fff;
+  }
+  .user-chip { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; padding: 6px 10px; border-radius: 8px; }
+  .user-chip:hover { background: #f2f4f1; }
+  .content { flex: 1; padding: 26px; max-width: 1180px; width: 100%; margin: 0 auto; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+  .page-header h2 { font-size: 19px; }
+  .toast {
+    position: fixed; bottom: 22px; right: 22px; background: var(--ink); color: #fff;
+    padding: 12px 18px; border-radius: 8px; font-size: 13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    z-index: 200; opacity: 0; transform: translateY(8px); transition: all 0.2s ease;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { background: var(--danger); }
+  @media (max-width: 860px) {
+    .sidebar { position: fixed; z-index: 50; height: 100%; transform: translateX(-100%); transition: transform .2s; }
+    .sidebar.open { transform: translateX(0); }
+    .menu-toggle { display: inline-flex !important; }
+  }
+  .menu-toggle { display: none; }
+</style>
+</head>
+<body>
+  <div id="blocking-screen" style="display:none;"></div>
+  <div class="app-shell" id="app-shell" style="display:none;">
+    <nav class="sidebar" id="sidebar"></nav>
+    <div class="main-area">
+      <div class="topbar">
+        <button class="btn btn-ghost menu-toggle" id="menu-toggle"><i data-lucide="menu" class="icon"></i></button>
+        <div class="user-chip" id="user-chip"></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

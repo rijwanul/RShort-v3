@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in - RShort v3</title>
+<link rel="icon" id="favicon" href="/img/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .auth-card { max-width: 380px; width: calc(100% - 40px); }
+  .auth-logo { max-width: 44px; max-height: 44px; margin-bottom: 14px; border-radius: 10px; }
+  .auth-links { text-align: center; margin-top: 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="card auth-card">
+    <div id="brand"></div>
+    <h1>Sign in</h1>
+    <p>Enter your credentials to access your dashboard.</p>
+    <div id="alert"></div>
+    <form id="login-form" class="stack">
+      <div class="field">
+        <label for="identifier">Username or email</label>
+        <input id="identifier" name="identifier" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="submit-btn" style="width:100%;justify-content:center;">Sign in</button>
+    </form>
+    <div class="auth-links">
+      <a href="#" id="forgot-link">Forgot password?</a>
+      <span id="register-link-wrap" style="display:none;"> &middot; <a href="/register">Create an account</a></span>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="forgot-modal" style="display:none;">
+    <div class="modal" style="max-width:360px;">
+      <div class="modal-header"><h3>Reset your password</h3></div>
+      <div id="forgot-alert"></div>
+      <div id="forgot-unavailable" style="display:none;">
+        <p>Resetting password via email is not possible. Contact your system admin.</p>
+        <div class="row" style="justify-content:flex-end;">
+          <button type="button" class="btn btn-secondary" id="forgot-unavailable-close">Close</button>
+        </div>
+      </div>
+      <form id="forgot-form" class="stack">
+        <div class="field">
+          <label for="forgot-identifier">Username or email</label>
+          <input id="forgot-identifier" required>
+        </div>
+        <div class="row" style="justify-content:flex-end;">
+          <button type="button" class="btn btn-secondary" id="forgot-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Send reset email</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module">
+    import { get, post, escapeHtml } from "/js/api.js";
+
+    async function init() {
+      const settings = await get("/api/site-info").catch(() => ({}));
+      window.__siteSettings = settings;
+      document.title = `Sign in - ${settings.site_title || "RShort v3"}`;
+      if (settings.favicon_url) document.getElementById("favicon").href = settings.favicon_url;
+      document.getElementById("brand").innerHTML = settings.logo_url
+        ? `<img class="auth-logo" src="${escapeHtml(settings.logo_url)}" alt="" onerror="this.style.display='none'">`
+        : "";
+      if (settings.registration_enabled && settings.registration_show_on_homepage) {
+        document.getElementById("register-link-wrap").style.display = "inline";
+      }
+      if (!settings.forgot_password_enabled) {
+        document.getElementById("forgot-link").style.display = "none";
+      }
+    }
+    init();
+
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const alertBox = document.getElementById("alert");
+      const btn = document.getElementById("submit-btn");
+      alertBox.innerHTML = "";
+      btn.disabled = true;
+      try {
+        await post("/api/auth/login", {
+          identifier: document.getElementById("identifier").value.trim(),
+          password: document.getElementById("password").value,
+        });
+        window.location.href = "/dashboard";
+      } catch (err) {
+        alertBox.innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+        btn.disabled = false;
+      }
+    });
+
+    const modal = document.getElementById("forgot-modal");
+    document.getElementById("forgot-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      const alertBox = document.getElementById("forgot-alert");
+      const form = document.getElementById("forgot-form");
+      const unavailable = document.getElementById("forgot-unavailable");
+      alertBox.innerHTML = "";
+      const s = window.__siteSettings || {};
+      if (s.emailConfigured === false) {
+        form.style.display = "none";
+        unavailable.style.display = "block";
+      } else {
+        form.style.display = "flex";
+        unavailable.style.display = "none";
+      }
+      modal.style.display = "flex";
+    });
+    document.getElementById("forgot-unavailable-close").addEventListener("click", () => {
+      modal.style.display = "none";
+    });
+    document.getElementById("forgot-cancel").addEventListener("click", () => {
+      modal.style.display = "none";
+    });
+    document.getElementById("forgot-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const alertBox = document.getElementById("forgot-alert");
+      alertBox.innerHTML = "";
+      try {
+        const res = await post("/api/auth/forgot-password", {
+          identifier: document.getElementById("forgot-identifier").value.trim(),
+        });
+        alertBox.innerHTML = `<div class="alert alert-ok">${escapeHtml(res.message)}</div>`;
+      } catch (err) {
+        alertBox.innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+      }
+    });
+  </script>
+</body>
+</html>

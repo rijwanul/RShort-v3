@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create account - RShort v3</title>
+<link rel="icon" id="favicon" href="/img/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .auth-card { max-width: 400px; width: calc(100% - 40px); }
+  .auth-logo { max-width: 44px; max-height: 44px; margin-bottom: 14px; border-radius: 10px; }
+  .auth-links { text-align: center; margin-top: 16px; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="card auth-card">
+    <div id="brand"></div>
+    <div id="content"><p>Loading...</p></div>
+  </div>
+
+  <script type="module">
+    import { get, post, escapeHtml } from "/js/api.js";
+
+    function renderClosed(settings) {
+      document.getElementById("content").innerHTML = `
+        <h1>Registration closed</h1>
+        <p>New accounts are not being accepted on this site right now.</p>
+        <div class="auth-links"><a href="/login">Back to sign in</a></div>
+      `;
+    }
+
+    function renderForm() {
+      document.getElementById("content").innerHTML = `
+        <h1>Create account</h1>
+        <p>Fill in your details to get started.</p>
+        <div id="alert"></div>
+        <form id="register-form" class="stack">
+          <div class="field">
+            <label for="username">Username</label>
+            <input id="username" required pattern="[a-zA-Z0-9_-]{3,32}">
+            <div class="hint">3-32 characters: letters, numbers, underscore or dash.</div>
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" type="email" required>
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" type="password" required minlength="8">
+            <div class="hint">At least 8 characters.</div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="submit-btn" style="width:100%;justify-content:center;">Create account</button>
+        </form>
+        <div class="auth-links"><a href="/login">Already have an account? Sign in</a></div>
+      `;
+
+      document.getElementById("register-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const alertBox = document.getElementById("alert");
+        const btn = document.getElementById("submit-btn");
+        alertBox.innerHTML = "";
+        btn.disabled = true;
+        try {
+          const res = await post("/api/auth/register", {
+            username: document.getElementById("username").value.trim(),
+            email: document.getElementById("email").value.trim(),
+            password: document.getElementById("password").value,
+          });
+          document.getElementById("content").innerHTML = `
+            <h1>Almost there</h1>
+            <div class="alert alert-ok">${escapeHtml(res.message)}</div>
+            <div class="auth-links"><a href="/login">Back to sign in</a></div>
+          `;
+        } catch (err) {
+          alertBox.innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+          btn.disabled = false;
+        }
+      });
+    }
+
+    async function init() {
+      const settings = await get("/api/site-info").catch(() => ({}));
+      document.title = `Create account - ${settings.site_title || "RShort v3"}`;
+      if (settings.favicon_url) document.getElementById("favicon").href = settings.favicon_url;
+      document.getElementById("brand").innerHTML = settings.logo_url
+        ? `<img class="auth-logo" src="${escapeHtml(settings.logo_url)}" alt="" onerror="this.style.display='none'">`
+        : "";
+      if (settings.registration_enabled) renderForm();
+      else renderClosed(settings);
+    }
+    init();
+  </script>
+</body>
+</html>

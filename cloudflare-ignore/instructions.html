@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RShort v3 - Deployment Instructions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --accent: #417B5A; --ink: #1c231e; --ink-soft: #5c665f; --line: #e1e6e1; --bg: #f5f7f4; }
+  * { box-sizing: border-box; }
+  body { font-family: "Poppins", sans-serif; background: var(--bg); color: var(--ink); margin: 0; line-height: 1.6; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 26px; margin-bottom: 4px; }
+  h2 { font-size: 18px; margin-top: 40px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  p { color: var(--ink-soft); }
+  .step { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+  .step h3 { margin: 0 0 8px; font-size: 15px; }
+  pre {
+    background: #1c231e; color: #eaf5ee; padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+    font-size: 13px; position: relative; margin: 10px 0 0;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px; background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .copy-btn:hover { opacity: 0.9; }
+  .note { background: #eef1ee; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 10px; }
+  .tester { background: #fbfcfb; border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 14px; }
+  .tester input, .tester select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 8px; font-family: inherit; font-size: 13px; }
+  .tester button { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit; }
+  .tester .result { margin-top: 10px; font-size: 12.5px; white-space: pre-wrap; background: #1c231e; color: #eaf5ee; padding: 10px; border-radius: 6px; display: none; max-height: 220px; overflow: auto; }
+  .badge { display: inline-block; background: var(--accent); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RShort v3 - Deployment Instructions</h1>
+  <p>This file is for you only. It is excluded from deployment via <code>.cloudflareignore</code> so it never gets published to your Worker.</p>
+
+  <h2>1. Prerequisites</h2>
+  <div class="step">
+    <h3>Install Wrangler (Cloudflare's CLI)</h3>
+    <pre><code>npm install -g wrangler</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <h3 style="margin-top:16px;">Log in</h3>
+    <pre><code>wrangler login</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <div class="note">If you manage several Cloudflare accounts with named Wrangler profiles, activate one first with <code>wrangler auth activate &lt;profile-name&gt;</code>.</div>
+  </div>
+
+  <h2>2. Create the D1 database</h2>
+  <div class="step">
+    <pre><code>wrangler d1 create rshort3_db</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <p>Copy the <code>database_id</code> from the output into <code>wrangler.toml</code> under <code>[[d1_databases]]</code>.</p>
+  </div>
+
+  <h2>3. Apply the schema</h2>
+  <div class="step">
+    <pre><code>wrangler d1 execute rshort3_db --remote --file=./schema.sql</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+  </div>
+
+  <h2>4. Set your secrets</h2>
+  <div class="step">
+    <p>These are never stored in the repo. Wrangler will prompt you for each value.</p>
+    <pre><code>wrangler secret put JWT_SECRET</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <pre><code>wrangler secret put ROOT_USERNAME</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <pre><code>wrangler secret put ROOT_PASSWORD</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <div class="note">
+      JWT_SECRET: any long random string (32+ characters). You can generate one with
+      <code>openssl rand -base64 32</code>.<br>
+      ROOT_USERNAME can be a plain username or an email address.<br>
+      The root admin will be forced to change ROOT_PASSWORD on first login.
+    </div>
+  </div>
+
+  <h2>5. Deploy</h2>
+  <div class="step">
+    <pre><code>wrangler deploy</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <p>Your worker will be live at <code>https://rs3.&lt;your-subdomain&gt;.workers.dev</code> (or your custom domain, if you attach one in the Cloudflare dashboard).</p>
+  </div>
+
+  <h2>6. First login</h2>
+  <div class="step">
+    <p>Go to <code>/login</code> and sign in with the ROOT_USERNAME / ROOT_PASSWORD you set as secrets. You will immediately be asked to set a new password.</p>
+  </div>
+
+  <h2>7. Local development (optional)</h2>
+  <div class="step">
+    <pre><code>wrangler d1 execute rshort3_db --local --file=./schema.sql
+wrangler dev</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>
+    <div class="note">Local dev also needs local secrets - create a <code>.dev.vars</code> file (already covered by <code>.gitignore</code>) with <code>JWT_SECRET</code>, <code>ROOT_USERNAME</code> and <code>ROOT_PASSWORD</code> lines.</div>
+  </div>
+
+  <h2>API tester <span class="badge">interactive</span></h2>
+  <p>Test your deployed API endpoints directly from this page. Replace the base URL with your actual deployment URL.</p>
+
+  <div class="tester">
+    <h3 style="margin:0 0 10px;">Base URL</h3>
+    <input id="base-url" placeholder="https://rs3.your-subdomain.workers.dev" value="https://rs3.your-subdomain.workers.dev">
+  </div>
+
+  <div class="tester">
+    <h3 style="margin:0 0 10px;">Check slug availability</h3>
+    <input id="check-slug" placeholder="slug-to-check">
+    <input id="check-api-key" placeholder="API key (Bearer token)">
+    <button onclick="checkAvailability()">Check availability</button>
+    <div class="result" id="check-result"></div>
+  </div>
+
+  <div class="tester">
+    <h3 style="margin:0 0 10px;">Create a new short link (/api/newEntry)</h3>
+    <input id="new-target" placeholder="https://example.com/page">
+    <input id="new-slug" placeholder="Optional custom slug">
+    <input id="new-api-key" placeholder="API key (Bearer token)">
+    <button onclick="createEntry()">Create link</button>
+    <div class="result" id="new-result"></div>
+  </div>
+
+  <div class="tester">
+    <h3 style="margin:0 0 10px;">Delete a short link (/api/deleteEntry)</h3>
+    <input id="del-slug" placeholder="slug-to-delete">
+    <input id="del-api-key" placeholder="API key (Bearer token)">
+    <button onclick="deleteEntry()">Delete link</button>
+    <div class="result" id="del-result"></div>
+  </div>
+</div>
+
+<script>
+function copyCode(btn) {
+  const text = btn.parentElement.querySelector("code").innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const original = btn.textContent;
+    btn.textContent = "Copied!";
+    setTimeout(() => (btn.textContent = original), 1200);
+  });
+}
+
+function baseUrl() {
+  return document.getElementById("base-url").value.replace(/\/$/, "");
+}
+
+function showResult(id, data) {
+  const el = document.getElementById(id);
+  el.style.display = "block";
+  el.textContent = JSON.stringify(data, null, 2);
+}
+
+async function checkAvailability() {
+  const slug = document.getElementById("check-slug").value;
+  const key = document.getElementById("check-api-key").value;
+  try {
+    const res = await fetch(`${baseUrl()}/api/checkAvailability?slug=${encodeURIComponent(slug)}`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+    showResult("check-result", await res.json());
+  } catch (err) {
+    showResult("check-result", { error: String(err) });
+  }
+}
+
+async function createEntry() {
+  const target = document.getElementById("new-target").value;
+  const slug = document.getElementById("new-slug").value;
+  const key = document.getElementById("new-api-key").value;
+  try {
+    const res = await fetch(`${baseUrl()}/api/newEntry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ target, slug: slug || undefined }),
+    });
+    showResult("new-result", await res.json());
+  } catch (err) {
+    showResult("new-result", { error: String(err) });
+  }
+}
+
+async function deleteEntry() {
+  const slug = document.getElementById("del-slug").value;
+  const key = document.getElementById("del-api-key").value;
+  try {
+    const res = await fetch(`${baseUrl()}/api/deleteEntry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ slug }),
+    });
+    showResult("del-result", await res.json());
+  } catch (err) {
+    showResult("del-result", { error: String(err) });
+  }
+}
+</script>
+</body>
+</html>
