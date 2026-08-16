@@ -119,8 +119,8 @@ async function routeApi(request, env, path, method) {
   if (path === "/api/auth/forgot-password" && method === "POST") return Auth.handleForgotPassword(request, env);
 
   // ---- Public API-key-authed endpoints ----
-  if (path === "/api/checkAvailability" && method === "GET") {
-    const { user, error } = await requireApiKeyOrSession(request, env);
+  if (path === "/api/checkAvailability" && method === "POST") {
+    const { user, error } = await requireApiKeyAuth(request, env);
     if (error) return error;
     return Urls.handleCheckAvailability(request, env, user);
   }
@@ -147,6 +147,7 @@ async function routeApi(request, env, path, method) {
     return forbidden("You must change your password before continuing.");
   }
 
+  if (path === "/api/urls/bulk" && method === "POST") return Urls.handleBulkUpdateUrls(request, env, user);
   if (path === "/api/urls" && method === "GET") return Urls.handleListUrls(request, env, user);
   if (path === "/api/urls" && method === "POST") return Urls.handleCreateUrl(request, env, user);
   if (path.match(/^\/api\/urls\/\d+$/) && method === "PUT") {
@@ -195,6 +196,8 @@ async function routeApi(request, env, path, method) {
   if (path === "/api/error-settings" && method === "GET") return Admin.handleGetErrorSettings(request, env, user);
   if (path === "/api/error-settings" && method === "PUT") return Admin.handleUpdateErrorSettings(request, env, user);
 
+  if (path === "/api/settings/test-email" && method === "POST") return Admin.handleSendTestEmail(request, env, user);
+
   if (path === "/api/settings" && method === "GET") return Admin.handleGetSettings(request, env, user);
   if (path === "/api/settings" && method === "PUT") return Admin.handleUpdateSettings(request, env, user);
 
@@ -227,12 +230,4 @@ async function routeApi(request, env, path, method) {
   }
 
   return null;
-}
-
-async function requireApiKeyOrSession(request, env) {
-  const sessionUser = await getCurrentUser(request, env);
-  if (sessionUser) return { user: sessionUser };
-  const apiResult = await getUserFromApiKey(request, env);
-  if (apiResult) return { user: apiResult.user };
-  return { error: unauthorized() };
 }

@@ -88,8 +88,9 @@ async function getHitTotal(env, urlId) {
 }
 
 export async function handleCheckAvailability(request, env, user) {
+  const body = await request.json().catch(() => ({}));
   const url = new URL(request.url);
-  const slug = url.searchParams.get("slug") || "";
+  const slug = body.slug || url.searchParams.get("slug") || "";
   const settings = await getSettings(env, ["slug_min_chars"]);
   const result = await isSlugAvailable(env, slug, settings.slug_min_chars || 4);
   return json(result);
@@ -215,6 +216,114 @@ async function canManageUrl(env, user, urlRow) {
     return owner && owner.parent_id === user.id;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------
+// Bulk actions on multiple selected links at once. Every id is checked
+// against canManageUrl individually - ids the caller can't manage are
+// silently skipped and reported back, rather than failing the whole
+// batch, so a partially-stale selection (e.g. someone else just
+// deleted one) doesn't block the rest.
+// ---------------------------------------------------------------------
+export async function handleBulkUpdateUrls(request, env, user) {
+  const body = await request.json().catch(() => ({}));
+  const { ids, action } = body;
+  if (!Array.isArray(ids) || !ids.length) return badRequest("No links selected.");
+  if (!action) return badRequest("No action specified.");
+
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(`SELECT * FROM urls WHERE id IN (${placeholders}) AND deleted_at IS NULL`)
+    .bind(...ids)
+    .all();
+
+  const manageable = [];
+  const skipped = [];
+  for (const row of rows.results) {
+    if (await canManageUrl(env, user, row)) manageable.push(row);
+    else skipped.push(row.id);
+  }
+  if (!manageable.length) return badRequest("You don't have permission to manage any of the selected links.");
+
+  const manageableIds = manageable.map((r) => r.id);
+  const idPlaceholders = manageableIds.map(() => "?").join(",");
+
+  let logMessage;
+  switch (action) {
+    case "enable":
+      await env.DB.prepare(`UPDATE urls SET enabled = 1, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(...manageableIds)
+        .run();
+      logMessage = `enabled ${manageable.length} short link(s)`;
+      break;
+    case "disable":
+      await env.DB.prepare(`UPDATE urls SET enabled = 0, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(...manageableIds)
+        .run();
+      logMessage = `disabled ${manageable.length} short link(s)`;
+      break;
+    case "removePassword":
+      await env.DB.prepare(`UPDATE urls SET password = NULL, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(...manageableIds)
+        .run();
+      logMessage = `removed the password from ${manageable.length} short link(s)`;
+      break;
+    case "applyPassword": {
+      const pw = body.password;
+      if (!pw) return badRequest("Provide a password to apply.");
+      await env.DB.prepare(`UPDATE urls SET password = ?, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(pw, ...manageableIds)
+        .run();
+      logMessage = `applied a password to ${manageable.length} short link(s)`;
+      break;
+    }
+    case "iframeOn":
+      await env.DB.prepare(`UPDATE urls SET full_iframe = 1, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(...manageableIds)
+        .run();
+      logMessage = `enabled full-page iframe on ${manageable.length} short link(s)`;
+      break;
+    case "iframeOff":
+      await env.DB.prepare(`UPDATE urls SET full_iframe = 0, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(...manageableIds)
+        .run();
+      logMessage = `disabled full-page iframe on ${manageable.length} short link(s)`;
+      break;
+    case "delete":
+      await env.DB.prepare(`DELETE FROM urls WHERE id IN (${idPlaceholders})`).bind(...manageableIds).run();
+      logMessage = `deleted ${manageable.length} short link(s)`;
+      break;
+    case "transfer": {
+      // Sub-users never get this option client-side, but enforce it
+      // server-side too regardless of what the client sends.
+      if (user.parent_id) return badRequest("Sub-users cannot transfer links.");
+      const transferToId = body.transferToId;
+      if (!transferToId) return badRequest("Choose an account to transfer to.");
+      const dest = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(transferToId).first();
+      if (!dest) return badRequest("Transfer destination account not found.");
+      if (!user.is_root) {
+        // A parent may transfer to themselves or to one of their own sub-users only.
+        const allowed = String(dest.id) === String(user.id) || String(dest.parent_id) === String(user.id);
+        if (!allowed) return badRequest("You can only transfer links to yourself or one of your own sub-users.");
+      }
+      await env.DB.prepare(`UPDATE urls SET created_by = ?, updated_at = datetime('now') WHERE id IN (${idPlaceholders})`)
+        .bind(transferToId, ...manageableIds)
+        .run();
+      logMessage = `transferred ${manageable.length} short link(s) to "${dest.username}"`;
+      break;
+    }
+    default:
+      return badRequest("Unknown bulk action.");
+  }
+
+  await logActivity(env, {
+    actorType: "user",
+    actorId: user.id,
+    actorLabel: user.username,
+    action: "url.bulk_update",
+    message: `${user.username} ${logMessage}.`,
+  });
+
+  return json({ ok: true, affected: manageable.length, skipped: skipped.length });
 }
 
 export async function handleUpdateUrl(request, env, user, id) {

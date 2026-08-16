@@ -15,6 +15,8 @@ function serializeUser(row, usernameById) {
     mustChangePassword: !!row.must_change_password,
     enabled: !!row.enabled,
     approved: !!row.approved,
+    disabledByLockout: !!row.disabled_by_lockout,
+    isLockedOut: !!(row.locked_until && new Date(row.locked_until) > new Date()),
     createdAt: row.created_at,
   };
 }
@@ -158,9 +160,11 @@ export async function handleUpdateUser(request, env, actor, id) {
   }
 
   let justDisabled = false;
+  let justReenabled = false;
   if (body.enabled !== undefined && actor.id !== target.id) {
     updates.enabled = body.enabled ? 1 : 0;
     if (target.enabled && !body.enabled) justDisabled = true;
+    if (!target.enabled && body.enabled) justReenabled = true;
   }
 
   let permissionsChanged = false;
@@ -190,6 +194,12 @@ export async function handleUpdateUser(request, env, actor, id) {
   )
     .bind(updates.email, updates.enabled, JSON.stringify(newPerms), id)
     .run();
+
+  if (justReenabled) {
+    await env.DB.prepare("UPDATE users SET failed_login_count = 0, locked_until = NULL, disabled_by_lockout = 0 WHERE id = ?")
+      .bind(id)
+      .run();
+  }
 
   if (justDisabled && target.email) {
     await sendTemplatedEmail(env, "account_disabled", target.email, { username: target.username });
@@ -442,7 +452,7 @@ export async function handleResetPassword(request, env, actor, id) {
   const mustChangePassword = !!body.mustChangePassword;
 
   await env.DB.prepare(
-    "UPDATE users SET password_hash = ?, must_change_password = ?, token_version = token_version + 1 WHERE id = ?"
+    "UPDATE users SET password_hash = ?, must_change_password = ?, token_version = token_version + 1, failed_login_count = 0, locked_until = NULL, disabled_by_lockout = 0 WHERE id = ?"
   )
     .bind(passwordHash, mustChangePassword ? 1 : 0, id)
     .run();

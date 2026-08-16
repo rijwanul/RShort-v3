@@ -10,6 +10,13 @@ export async function api(path, options = {}) {
   } catch {
     data = null;
   }
+  if (res.status === 401 && path !== "/api/me") {
+    // Session expired or was invalidated mid-use (e.g. token_version
+    // bumped elsewhere). Send the user to login instead of showing a
+    // confusing inline "not authenticated" error in the SPA.
+    window.location.href = "/login";
+    return new Promise(() => {}); // never resolves; navigation is already underway
+  }
   if (!res.ok) {
     const err = new Error((data && data.error) || `Request failed (${res.status})`);
     err.status = res.status;

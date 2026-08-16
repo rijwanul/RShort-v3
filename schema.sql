@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
   approved INTEGER NOT NULL DEFAULT 1, -- used for self-registration approval queue
   token_version INTEGER NOT NULL DEFAULT 1, -- bump to invalidate all outstanding JWTs
   error_settings TEXT NOT NULL DEFAULT '{}', -- JSON: per-user 404/disabled error config
+  failed_login_count INTEGER NOT NULL DEFAULT 0, -- consecutive failed logins, resets to 0 on success
+  locked_until TEXT, -- ISO timestamp; NULL = not locked
+  disabled_by_lockout INTEGER NOT NULL DEFAULT 0, -- 1 = disabled by the 50-attempt tier, not manually
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -29,6 +32,19 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- ---------------------------------------------------------------------
+-- MIGRATION for databases created before the login-lockout feature.
+-- SQLite has no "ADD COLUMN IF NOT EXISTS", so these three lines will
+-- error with "duplicate column name" if run against a database that
+-- already has them. Since this is the first schema.sql run to include
+-- them, run it once now as usual; if you re-run schema.sql again
+-- LATER (after these columns already exist), comment out or delete
+-- this block first, or the whole file will abort on it.
+-- ---------------------------------------------------------------------
+--ALTER TABLE users ADD COLUMN failed_login_count INTEGER NOT NULL DEFAULT 0;
+--ALTER TABLE users ADD COLUMN locked_until TEXT;
+--ALTER TABLE users ADD COLUMN disabled_by_lockout INTEGER NOT NULL DEFAULT 0;
 
 -- ---------------------------------------------------------------------
 -- Short URLs
@@ -154,7 +170,8 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('default_disabled_text', '"Link has been disabled!"'),
   ('default_disabled_button_label', '""'),
   ('default_disabled_button_url', '""'),
-  ('subusers_feature_enabled', 'true');
+  ('subusers_feature_enabled', 'true'),
+  ('login_lockout_enabled', 'true');
 
 -- ---------------------------------------------------------------------
 -- Email templates. Each event (welcome, password_reset,

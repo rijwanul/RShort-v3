@@ -455,11 +455,14 @@ function wireLinkForm(root, existing) {
 }
 
 let linksCache = [];
+let selectedLinkIds = new Set();
+
 async function loadLinksTable() {
   const wrap = document.getElementById("links-table-wrap");
   if (!wrap) return;
   const res = await get("/api/urls");
   linksCache = res.urls;
+  selectedLinkIds = new Set([...selectedLinkIds].filter((id) => linksCache.some((u) => String(u.id) === String(id))));
   if (!linksCache.length) {
     wrap.innerHTML = `<div class="empty-state"><i data-lucide="link-2" class="icon" style="width:28px;height:28px;"></i><p>No short links yet. Create your first one above.</p></div>`;
     lucide.createIcons();
@@ -467,9 +470,11 @@ async function loadLinksTable() {
   }
   const showOwnerCols = state.user.isRoot || hasPerm("subusers.manage");
   wrap.innerHTML = `
+    <div id="bulk-action-bar"></div>
     <div class="card" style="padding:0;overflow-x:auto;">
       <table>
         <thead><tr>
+          <th style="width:36px;"><input type="checkbox" id="select-all-links"></th>
           <th>Slug</th><th>Target</th>${showOwnerCols ? "<th>Owner</th><th>Parent User</th>" : ""}
           <th>Hits</th><th>Enabled</th><th></th>
         </tr></thead>
@@ -490,7 +495,163 @@ async function loadLinksTable() {
   wrap.querySelectorAll("[data-toggle-link]").forEach((btn) =>
     btn.addEventListener("click", () => toggleLinkEnabled(btn.dataset.toggleLink, btn.dataset.enable === "1"))
   );
+  wrap.querySelectorAll("[data-select-link]").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedLinkIds.add(cb.dataset.selectLink);
+      else selectedLinkIds.delete(cb.dataset.selectLink);
+      syncSelectAllCheckbox();
+      renderBulkActionBar();
+    })
+  );
+  const selectAll = document.getElementById("select-all-links");
+  selectAll.addEventListener("change", () => {
+    if (selectAll.checked) {
+      linksCache.forEach((u) => selectedLinkIds.add(String(u.id)));
+    } else {
+      selectedLinkIds.clear();
+    }
+    wrap.querySelectorAll("[data-select-link]").forEach((cb) => (cb.checked = selectedLinkIds.has(cb.dataset.selectLink)));
+    renderBulkActionBar();
+  });
+  syncSelectAllCheckbox();
+  renderBulkActionBar();
   lucide.createIcons();
+}
+
+function syncSelectAllCheckbox() {
+  const selectAll = document.getElementById("select-all-links");
+  if (!selectAll) return;
+  selectAll.checked = linksCache.length > 0 && linksCache.every((u) => selectedLinkIds.has(String(u.id)));
+  selectAll.indeterminate = selectedLinkIds.size > 0 && !selectAll.checked;
+}
+
+function renderBulkActionBar() {
+  const bar = document.getElementById("bulk-action-bar");
+  if (!bar) return;
+  const count = selectedLinkIds.size;
+  if (!count) {
+    bar.innerHTML = "";
+    return;
+  }
+  const canTransfer = !state.user.parentId; // subusers never see transfer
+  bar.innerHTML = `
+    <div class="card" style="margin-bottom:14px;background:#f4f7f3;">
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;">
+        <strong style="margin-right:6px;">${count} selected</strong>
+        <button class="btn btn-secondary btn-sm" data-bulk="enable">Enable all</button>
+        <button class="btn btn-secondary btn-sm" data-bulk="disable">Disable all</button>
+        <button class="btn btn-secondary btn-sm" data-bulk="removePassword">Remove password</button>
+        <button class="btn btn-secondary btn-sm" data-bulk="applyPassword">Apply password</button>
+        <button class="btn btn-secondary btn-sm" data-bulk="iframeOn">Turn on iframe</button>
+        <button class="btn btn-secondary btn-sm" data-bulk="iframeOff">Turn off iframe</button>
+        ${canTransfer ? `<button class="btn btn-secondary btn-sm" data-bulk="transfer">Transfer to...</button>` : ""}
+        <button class="btn btn-danger btn-sm" data-bulk="delete">Delete all</button>
+        <button class="btn btn-ghost btn-sm" id="bulk-clear" style="margin-left:auto;">Clear selection</button>
+      </div>
+    </div>`;
+  bar.querySelectorAll("[data-bulk]").forEach((btn) =>
+    btn.addEventListener("click", () => handleBulkActionClick(btn.dataset.bulk))
+  );
+  document.getElementById("bulk-clear").addEventListener("click", () => {
+    selectedLinkIds.clear();
+    loadLinksTable();
+  });
+}
+
+async function handleBulkActionClick(action) {
+  const ids = [...selectedLinkIds];
+  if (!ids.length) return;
+
+  if (action === "delete") {
+    if (!confirm(`Delete ${ids.length} short link(s)? This cannot be undone.`)) return;
+    await runBulkAction(action, ids);
+    return;
+  }
+
+  if (action === "applyPassword") {
+    const password = prompt(`Enter the password to apply to all ${ids.length} selected link(s):`);
+    if (password === null) return;
+    if (!password) {
+      toast("Password cannot be empty.", true);
+      return;
+    }
+    await runBulkAction(action, ids, { password });
+    return;
+  }
+
+  if (action === "transfer") {
+    await openBulkTransferModal(ids);
+    return;
+  }
+
+  await runBulkAction(action, ids);
+}
+
+async function runBulkAction(action, ids, extra = {}) {
+  try {
+    const res = await post("/api/urls/bulk", { action, ids, ...extra });
+    toast(`Updated ${res.affected} link(s).${res.skipped ? ` ${res.skipped} skipped.` : ""}`);
+    selectedLinkIds.clear();
+    await loadLinksTable();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function openBulkTransferModal(ids) {
+  let users = [];
+  try {
+    const res = await get("/api/users");
+    users = res.users || [];
+  } catch {
+    users = [];
+  }
+
+  let targets;
+  if (state.user.isRoot) {
+    targets = users; // any parent or subuser
+  } else {
+    // A parent can transfer to themselves or to one of their own sub-users.
+    targets = [
+      { id: state.user.id, username: `${state.user.username} (you)` },
+      ...users.filter((u) => String(u.parentId) === String(state.user.id)),
+    ];
+  }
+
+  if (!targets.length) {
+    toast("No eligible destination account found.", true);
+    return;
+  }
+
+  openModal(`
+    <div class="modal-header"><h3>Transfer ${ids.length} link(s)</h3></div>
+    <div id="bt-alert"></div>
+    <form id="bt-form" class="stack">
+      <div class="field">
+        <label>Transfer to</label>
+        <select id="bt-target">
+          ${targets.map((u) => `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join("")}
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit">Transfer</button>
+    </form>`);
+
+  document.getElementById("bt-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const res = await post("/api/urls/bulk", {
+        action: "transfer",
+        ids,
+        transferToId: document.getElementById("bt-target").value,
+      });
+      closeModal();
+      toast(`Transferred ${res.affected} link(s).`);
+      selectedLinkIds.clear();
+      await loadLinksTable();
+    } catch (err) {
+      document.getElementById("bt-alert").innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+    }
+  });
 }
 
 async function toggleLinkEnabled(id, enable) {
@@ -505,6 +666,7 @@ async function toggleLinkEnabled(id, enable) {
 function rowHtml(showOwnerCols) {
   return (u) => `
     <tr>
+      <td><input type="checkbox" data-select-link="${u.id}" ${selectedLinkIds.has(String(u.id)) ? "checked" : ""}></td>
       <td><a href="/${escapeHtml(u.slug)}" target="_blank">/${escapeHtml(u.slug)}</a></td>
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(u.target)}">${escapeHtml(u.target)}</td>
       ${showOwnerCols ? `<td>${escapeHtml(u.createdBy)}</td><td>${escapeHtml(u.parentUser || "-")}</td>` : ""}
@@ -669,7 +831,17 @@ function userRowHtml(u) {
     ${state.user.isRoot ? `<td>${escapeHtml(u.parentUsername || "-")}</td>` : ""}
     <td>${u.urlCount}</td>
     <td>
-      ${!u.approved ? '<span class="badge badge-off">Pending approval</span>' : u.enabled ? '<span class="badge badge-ok">Enabled</span>' : '<span class="badge badge-danger">Disabled</span>'}
+      ${
+        !u.approved
+          ? '<span class="badge badge-off">Pending approval</span>'
+          : u.disabledByLockout
+          ? '<span class="badge badge-danger">Disabled (lockout)</span>'
+          : !u.enabled
+          ? '<span class="badge badge-danger">Disabled</span>'
+          : u.isLockedOut
+          ? '<span class="badge badge-off">Temporarily locked</span>'
+          : '<span class="badge badge-ok">Enabled</span>'
+      }
     </td>
     <td>
       <div class="row">
@@ -952,8 +1124,8 @@ async function renderApiPage(content) {
     <div class="card">
       <h3>API documentation</h3>
       <p>Include your key as a bearer token: <code>Authorization: Bearer &lt;key&gt;</code>. Your key acts with your account's own permissions.</p>
-      <h4>GET /api/checkAvailability?slug=your-slug</h4>
-      <p>Checks whether a slug can be used.</p>
+      <h4>POST /api/checkAvailability</h4>
+      <p>Body: <code>{ "slug": "your-slug" }</code> - checks whether a slug can be used.</p>
       <h4>POST /api/newEntry</h4>
       <p>Body: <code>{ "target": "https://...", "slug": "optional", "password": "optional", "fullIframe": false, "socialEnabled": false }</code></p>
       <h4>POST /api/deleteEntry</h4>
@@ -1028,14 +1200,66 @@ async function deleteKey(id) {
 // Activity log
 // -----------------------------------------------------------------
 async function renderActivityPage(content) {
-  const res = await get("/api/activity-log");
+  content.innerHTML = `<div class="page-header"><h2>Activity Log</h2></div><p>Loading...</p>`;
+
+  let usersRes = { users: [] };
+  try {
+    usersRes = await get("/api/users");
+  } catch {
+    // A sub-user without user-list access simply won't get a populated
+    // Who dropdown beyond themselves; the log itself is still scoped
+    // server-side regardless of this list.
+  }
+
+  await loadAndRenderActivity(content, usersRes.users || []);
+}
+
+async function loadAndRenderActivity(content, users, filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.who) params.set("who", filters.who);
+  if (filters.category) params.set("category", filters.category);
+  const res = await get(`/api/activity-log${params.toString() ? "?" + params.toString() : ""}`);
+
+  const whoOptions = users.length
+    ? `<option value="">Everyone</option>${users.map((u) => `<option value="${u.id}" ${String(filters.who) === String(u.id) ? "selected" : ""}>${escapeHtml(u.username)}</option>`).join("")}`
+    : `<option value="">Everyone</option>`;
+
   content.innerHTML = `
-    <div class="page-header"><h2>Activity Log</h2></div>
+    <div class="page-header"><h2>Activity Log</h2>
+      <button class="btn btn-secondary btn-sm" id="activity-refresh"><i data-lucide="refresh-cw" class="icon"></i>Refresh</button>
+    </div>
+    <div class="row" style="margin-bottom:14px;gap:10px;flex-wrap:wrap;">
+      <div class="field" style="margin:0;min-width:180px;">
+        <label>Who</label>
+        <select id="activity-who">${whoOptions}</select>
+      </div>
+      <div class="field" style="margin:0;min-width:180px;">
+        <label>Action</label>
+        <select id="activity-category">
+          <option value="">All actions</option>
+          <option value="account" ${filters.category === "account" ? "selected" : ""}>Account</option>
+          <option value="settings" ${filters.category === "settings" ? "selected" : ""}>Settings</option>
+          <option value="links" ${filters.category === "links" ? "selected" : ""}>Links</option>
+        </select>
+      </div>
+    </div>
     <div class="card" style="padding:0;overflow-x:auto;">
       <table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>
-        ${res.entries.length ? res.entries.map((e) => `<tr><td>${formatDate(e.created_at)}</td><td>${escapeHtml(e.actor_label)}</td><td>${escapeHtml(e.message)}</td></tr>`).join("") : '<tr><td colspan="3">No activity yet.</td></tr>'}
+        ${res.entries.length ? res.entries.map((e) => `<tr><td>${formatDate(e.created_at)}</td><td>${escapeHtml(e.actor_label)}</td><td>${escapeHtml(e.message)}</td></tr>`).join("") : '<tr><td colspan="3">No activity found.</td></tr>'}
       </tbody></table>
     </div>`;
+
+  const rerun = () => {
+    const newFilters = {
+      who: document.getElementById("activity-who").value,
+      category: document.getElementById("activity-category").value,
+    };
+    loadAndRenderActivity(content, users, newFilters);
+  };
+  document.getElementById("activity-refresh").addEventListener("click", rerun);
+  document.getElementById("activity-who").addEventListener("change", rerun);
+  document.getElementById("activity-category").addEventListener("change", rerun);
+  lucide.createIcons();
 }
 
 // -----------------------------------------------------------------
@@ -1123,6 +1347,7 @@ async function renderSettingsPage(content) {
       ${canGeneral ? settingsSectionHtml("Login", authFieldsHtml(settings)) : ""}
       ${canApis ? settingsSectionHtml("Site APIs", apisFieldsHtml(settings)) : ""}
       ${canApis ? `<div id="email-templates-section"></div>` : ""}
+      ${canApis ? `<div id="test-email-section"></div>` : ""}
       ${canGeneral ? settingsSectionHtml("Default Error Pages", errorFieldsHtml(settings)) : ""}
     </div>`;
 
@@ -1159,7 +1384,56 @@ async function renderSettingsPage(content) {
   if (canApis) {
     const etSection = document.getElementById("email-templates-section");
     if (etSection) await renderEmailTemplatesSection(etSection);
+    const teSection = document.getElementById("test-email-section");
+    if (teSection) renderTestEmailSection(teSection, settings);
   }
+}
+
+function renderTestEmailSection(container, settings) {
+  container.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:6px;">Test Email</h3>
+      <p class="hint" style="margin-top:0;margin-bottom:14px;">Send a real templated email to verify a configured channel actually delivers.</p>
+      <div id="te-alert"></div>
+      <form id="te-form" class="stack">
+        <div class="grid-2">
+          <div class="field"><label>To</label><input id="te-to" type="email" required placeholder="you@example.com"></div>
+          <div class="field">
+            <label>Template</label>
+            <select id="te-template">
+              <option value="welcome">Welcome</option>
+              <option value="password_reset">Password Reset</option>
+              <option value="forgot_password">Forgot Password</option>
+              <option value="account_disabled">Account Disabled</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Send via</label>
+          <select id="te-via">
+            <option value="webhook" ${!settings.email_webhook_url ? "disabled" : ""}>Email Webhook${!settings.email_webhook_url ? " (not configured)" : ""}</option>
+            <option value="resend" ${!settings.resend_api_key || !settings.resend_from_email ? "disabled" : ""}>Resend API${!settings.resend_api_key || !settings.resend_from_email ? " (not configured)" : ""}</option>
+          </select>
+        </div>
+        <div><button class="btn btn-primary" type="submit">Send test email</button></div>
+      </form>
+    </div>`;
+
+  document.getElementById("te-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const alertBox = document.getElementById("te-alert");
+    alertBox.innerHTML = "";
+    try {
+      await post("/api/settings/test-email", {
+        to: document.getElementById("te-to").value,
+        templateKey: document.getElementById("te-template").value,
+        via: document.getElementById("te-via").value,
+      });
+      alertBox.innerHTML = `<div class="alert alert-ok">Test email sent.</div>`;
+    } catch (err) {
+      alertBox.innerHTML = `<div class="alert alert-error">${escapeHtml(err.message)}</div>`;
+    }
+  });
 }
 
 async function openGlobalResolveSubusersModal(count) {
@@ -1365,16 +1639,28 @@ function registrationFieldsHtml(s) {
 }
 
 function authFieldsHtml(s) {
-  return `<div class="checkbox-row"><input type="checkbox" name="forgot_password_enabled" ${s.forgot_password_enabled ? "checked" : ""}><label>Show "Forgot password" option in login UI</label></div>`;
+  return `
+    <div class="checkbox-row"><input type="checkbox" name="forgot_password_enabled" ${s.forgot_password_enabled ? "checked" : ""}><label>Show "Forgot password" option in login UI</label></div>
+    <div class="checkbox-row" style="margin-top:10px;"><input type="checkbox" name="login_lockout_enabled" ${s.login_lockout_enabled !== false ? "checked" : ""}><label>Lock accounts after repeated failed login attempts</label></div>
+    <div class="hint">5 failed attempts locks the account for 15 minutes, 10 for 30 minutes, 30 for 6 hours. At 50, the account is disabled and needs a parent or admin to re-enable it. A successful login, or a password reset by a parent/admin, clears the count.</div>`;
 }
 
 function apisFieldsHtml(s) {
   return `
-    <div class="field"><label>ImgBB API key</label><input name="imgbb_api_key" value="${escapeHtml(s.imgbb_api_key || "")}"></div>
-    <div class="field"><label>Email webhook URL</label><input name="email_webhook_url" value="${escapeHtml(s.email_webhook_url || "")}">
-      <div class="hint">Receives a POST with JSON body: To, Subject, Body.</div></div>
+    <div class="field">
+      <label>ImgBB API key <a href="https://api.imgbb.com" target="_blank" rel="noopener" class="hint" style="text-decoration:underline;">Get API</a></label>
+      <input name="imgbb_api_key" value="${escapeHtml(s.imgbb_api_key || "")}">
+    </div>
+    <div class="field">
+      <label>Email webhook URL <a href="https://connect.pabbly.com/integrations/webhook-by-pabbly/gmail" target="_blank" rel="noopener" class="hint" style="text-decoration:underline;">Pabbly Connect</a></label>
+      <input name="email_webhook_url" value="${escapeHtml(s.email_webhook_url || "")}">
+      <div class="hint">Receives a POST with JSON body: To, CC, BCC, Subject, Body, Sender Name.</div>
+    </div>
     <div class="grid-2">
-      <div class="field"><label>Resend API key</label><input name="resend_api_key" value="${escapeHtml(s.resend_api_key || "")}"></div>
+      <div class="field">
+        <label>Resend API key <a href="https://resend.com/api-keys" target="_blank" rel="noopener" class="hint" style="text-decoration:underline;">Get API</a></label>
+        <input name="resend_api_key" value="${escapeHtml(s.resend_api_key || "")}">
+      </div>
       <div class="field"><label>Resend from-email</label><input name="resend_from_email" value="${escapeHtml(s.resend_from_email || "")}"></div>
     </div>`;
 }

@@ -22,10 +22,27 @@ export async function handleMe(request, env) {
   return json({ user: publicUser(user) });
 }
 
+// Lockout tiers, checked from highest to lowest. At `count` consecutive
+// failed attempts, the account is locked for `minutes` (or permanently
+// disabled, for the last tier, requiring parent/admin action).
+const LOCKOUT_TIERS = [
+  { count: 50, minutes: null, disable: true },
+  { count: 30, minutes: 360 },
+  { count: 10, minutes: 30 },
+  { count: 5, minutes: 15 },
+];
+
+function tierForCount(count) {
+  return LOCKOUT_TIERS.find((t) => count >= t.count) || null;
+}
+
 export async function handleLogin(request, env) {
   const body = await request.json().catch(() => ({}));
   const { identifier, password } = body;
   if (!identifier || !password) return badRequest("Username/email and password are required.");
+
+  const settings = await getSettings(env, ["login_lockout_enabled"]);
+  const lockoutEnabled = settings.login_lockout_enabled !== false;
 
   const user = await env.DB.prepare(
     "SELECT * FROM users WHERE (username = ? OR email = ?) COLLATE NOCASE"
@@ -34,11 +51,70 @@ export async function handleLogin(request, env) {
     .first();
 
   if (!user) return badRequest("Invalid username/email or password.");
+
+  if (lockoutEnabled && user.disabled_by_lockout) {
+    return badRequest("This account has been disabled after repeated failed login attempts. Contact your parent account or admin to re-enable it.");
+  }
   if (!user.enabled) return badRequest("This account has been disabled. Contact your administrator.");
   if (!user.approved) return badRequest("This account is awaiting admin approval.");
 
+  if (lockoutEnabled && user.locked_until && new Date(user.locked_until) > new Date()) {
+    const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+    return badRequest(`Too many failed attempts. Try again in about ${mins} minute(s).`);
+  }
+
   const ok = await verifyPassword(password, user.password_hash);
-  if (!ok) return badRequest("Invalid username/email or password.");
+
+  if (!ok) {
+    await logActivity(env, {
+      actorType: "user",
+      actorId: user.id,
+      actorLabel: user.username,
+      action: "auth.login_failed",
+      message: `Failed login attempt for "${user.username}".`,
+    });
+
+    if (lockoutEnabled) {
+      const newCount = (user.failed_login_count || 0) + 1;
+      const tier = tierForCount(newCount);
+      if (tier && tier.disable) {
+        await env.DB.prepare(
+          "UPDATE users SET failed_login_count = ?, disabled_by_lockout = 1, locked_until = NULL WHERE id = ?"
+        )
+          .bind(newCount, user.id)
+          .run();
+        await logActivity(env, {
+          actorType: "system",
+          actorId: user.id,
+          actorLabel: user.username,
+          action: "auth.account_locked",
+          message: `"${user.username}" was automatically disabled after ${newCount} consecutive failed login attempts.`,
+        });
+      } else if (tier) {
+        const lockedUntil = new Date(Date.now() + tier.minutes * 60000).toISOString();
+        await env.DB.prepare("UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?")
+          .bind(newCount, lockedUntil, user.id)
+          .run();
+        await logActivity(env, {
+          actorType: "system",
+          actorId: user.id,
+          actorLabel: user.username,
+          action: "auth.account_locked",
+          message: `"${user.username}" was locked for ${tier.minutes} minute(s) after ${newCount} consecutive failed login attempts.`,
+        });
+      } else {
+        await env.DB.prepare("UPDATE users SET failed_login_count = ? WHERE id = ?").bind(newCount, user.id).run();
+      }
+    }
+
+    return badRequest("Invalid username/email or password.");
+  }
+
+  if (lockoutEnabled && (user.failed_login_count > 0 || user.locked_until)) {
+    await env.DB.prepare("UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = ?")
+      .bind(user.id)
+      .run();
+  }
 
   const token = await issueToken(env, user);
   const headers = new Headers();

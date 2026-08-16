@@ -1,7 +1,7 @@
 import { json, badRequest, getSettings, setSetting, logActivity, parseCSV, parseBulkPasteLines, csvEscape, isSlugAvailable } from "../lib/utils.js";
 import { hasPermission } from "../lib/permissions.js";
 import { randomToken, sha256Hex, randomSlug } from "../lib/crypto.js";
-import { emailIsConfigured } from "../lib/email.js";
+import { emailIsConfigured, sendTestEmail } from "../lib/email.js";
 
 // ---------------------------------------------------------------------
 // Site Analytics (admin) - totals for the whole site, referrer
@@ -163,6 +163,35 @@ export async function handleUpdateErrorSettings(request, env, user) {
 }
 
 // ---------------------------------------------------------------------
+// Test email - lets an admin verify a configured channel (webhook or
+// Resend) actually delivers, using a real template rendered with
+// placeholder values.
+// ---------------------------------------------------------------------
+export async function handleSendTestEmail(request, env, user) {
+  if (!user.is_root && !hasPermission(user, "admin.site_apis")) {
+    return badRequest("You don't have permission to send test emails.");
+  }
+  const body = await request.json().catch(() => ({}));
+  const { to, templateKey, via } = body;
+  if (!to || !templateKey || !via) {
+    return badRequest("Provide a recipient, a template, and which API to send through.");
+  }
+
+  const result = await sendTestEmail(env, { to, templateKey, via });
+
+  await logActivity(env, {
+    actorType: "user",
+    actorId: user.id,
+    actorLabel: user.username,
+    action: "email_templates.test_send",
+    message: `${user.username} sent a test email (${templateKey} via ${via}) to ${to}${result.ok ? "" : " (failed)"}.`,
+  });
+
+  if (!result.ok) return badRequest(result.error || "Failed to send test email.");
+  return json({ ok: true });
+}
+
+// ---------------------------------------------------------------------
 // Site settings
 // ---------------------------------------------------------------------
 const SETTINGS_GROUPS = {
@@ -181,7 +210,7 @@ const SETTINGS_GROUPS = {
     "registration_domain_mode",
     "registration_domain_list",
   ],
-  auth: ["forgot_password_enabled"],
+  auth: ["forgot_password_enabled", "login_lockout_enabled"],
   apis: ["imgbb_api_key", "email_webhook_url", "resend_api_key", "resend_from_email"],
   errorDefaults: [
     "default_error_text",
@@ -384,22 +413,56 @@ export async function handleExportReservedKeywords(request, env, user) {
 // ---------------------------------------------------------------------
 // Activity log
 // ---------------------------------------------------------------------
+// Maps the action's prefix to one of the three UI-facing categories.
+// Falls back to "other" for anything unrecognized so a new action
+// added later doesn't silently vanish from every filter - it just
+// shows up under no category filter (i.e. only in the unfiltered view).
+function actionCategory(action) {
+  if (!action) return "other";
+  if (
+    action.startsWith("auth.") ||
+    action.startsWith("user.") ||
+    action.startsWith("apikey.")
+  ) {
+    return "account";
+  }
+  if (
+    action.startsWith("error_settings.") ||
+    action.startsWith("settings.") ||
+    action.startsWith("reserved.") ||
+    action.startsWith("email_templates.")
+  ) {
+    return "settings";
+  }
+  if (action.startsWith("url.")) return "links";
+  return "other";
+}
+
 export async function handleActivityLog(request, env, user) {
   if (!user.is_root && !hasPermission(user, "admin.activity_log") && !hasPermission(user, "activity_log.view")) {
     return badRequest("You don't have permission to view the activity log.");
   }
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
+  const who = url.searchParams.get("who"); // actor_id, optional
+  const category = url.searchParams.get("category"); // 'account' | 'settings' | 'links', optional
 
   let rows;
   if (user.is_root || hasPermission(user, "admin.activity_log")) {
-    rows = await env.DB.prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?")
-      .bind(limit)
-      .all();
+    if (who) {
+      rows = await env.DB.prepare("SELECT * FROM activity_log WHERE actor_id = ? ORDER BY created_at DESC LIMIT ?")
+        .bind(who, limit)
+        .all();
+    } else {
+      rows = await env.DB.prepare("SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?")
+        .bind(limit)
+        .all();
+    }
   } else {
     // Scoped: only this user's + their sub-users' + their API keys' activity.
     const subs = await env.DB.prepare("SELECT id FROM users WHERE parent_id = ?").bind(user.id).all();
-    const ids = [user.id, ...subs.results.map((s) => s.id)];
+    const scopedIds = [user.id, ...subs.results.map((s) => s.id)];
+    const ids = who && scopedIds.map(String).includes(String(who)) ? [who] : scopedIds;
     const placeholders = ids.map(() => "?").join(",");
     rows = await env.DB.prepare(
       `SELECT * FROM activity_log WHERE actor_id IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`
@@ -408,7 +471,12 @@ export async function handleActivityLog(request, env, user) {
       .all();
   }
 
-  return json({ entries: rows.results });
+  let entries = rows.results;
+  if (category) {
+    entries = entries.filter((e) => actionCategory(e.action) === category);
+  }
+
+  return json({ entries });
 }
 
 // ---------------------------------------------------------------------
